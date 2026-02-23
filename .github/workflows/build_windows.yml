@@ -1,0 +1,90 @@
+name: Build Windows EXE
+
+on:
+  push:
+    tags:
+      - "v*"          # 推送 tag（如 v0.1.0）时触发自动构建
+  workflow_dispatch:  # 也可在 Actions 页面手动触发
+
+permissions:
+  contents: write   # 允许创建 Release 并上传附件
+
+jobs:
+  build-windows:
+    name: PyInstaller → Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. 拉取代码 ──────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. 配置 Python ───────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # ── 3. 安装运行时依赖 + PyInstaller ──────────────────────────
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mediapipe==0.10.14 opencv-python==4.10.0.84
+          pip install -r requirements.txt
+          pip install pyinstaller==6.10.0
+
+      # ── 4. 构建 .exe ─────────────────────────────────────────────
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller build/eyeq_windows.spec --clean --noconfirm
+        env:
+          PYTHONOPTIMIZE: "1"
+
+      # ── 5. 复制运行时资源到 dist ──────────────────────────────────
+      - name: Copy runtime assets
+        run: |
+          Copy-Item config.yaml dist\EyeQ\
+          New-Item -ItemType Directory -Force -Path dist\EyeQ\data | Out-Null
+          # 复制仪表盘启动器
+          Copy-Item installer\launch_dashboard.bat dist\EyeQ\
+          Copy-Item installer\launch_headless.bat  dist\EyeQ\
+
+      # ── 6. 替换启动器中的 python_embed 路径为 EyeQ.exe ────────────
+      - name: Patch launchers for bundled exe mode
+        run: |
+          $db = Get-Content dist\EyeQ\launch_dashboard.bat -Raw
+          $db = $db -replace 'set PYTHON_EXE=.*', 'set PYTHON_EXE=%SCRIPT_DIR%EyeQ.exe'
+          $db -replace 'if not exist.*[\s\S]*?exit /b 1\)', '' | Set-Content dist\EyeQ\launch_dashboard.bat
+          $hb = Get-Content dist\EyeQ\launch_headless.bat -Raw
+          $hb = $hb -replace '"%PYTHON_EXE%" main.py --mode headless', '"%SCRIPT_DIR%EyeQ.exe" --mode headless'
+          $hb | Set-Content dist\EyeQ\launch_headless.bat
+
+      # ── 7. 生成医生版使用说明 ─────────────────────────────────────
+      - name: Generate doctor readme
+        run: |
+          Copy-Item installer\INSTALL_医生版使用说明.txt dist\EyeQ\使用说明.txt 2>$null || true
+
+      # ── 8. 打包 ZIP ───────────────────────────────────────────────
+      - name: Create ZIP archive
+        run: |
+          $version = "${{ github.ref_name }}"
+          if (-not $version) { $version = "latest" }
+          Compress-Archive -Path dist\EyeQ\* -DestinationPath "EyeQ_Windows_${version}.zip" -Force
+
+      # ── 9. 上传至 GitHub Release ──────────────────────────────────
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: EyeQ_Windows_*.zip
+          generate_release_notes: true
+          name: "EyeQ ${{ github.ref_name }} — Windows"
+
+      # ── 10. 同时上传为 Artifact（手动触发时使用）─────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EyeQ-Windows
+          path: EyeQ_Windows_*.zip
+          retention-days: 14

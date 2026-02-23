@@ -1,0 +1,15 @@
+data/*.db
+data/*.csv
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.egg-info/
+dist/
+# 只排除构建产物，保留 spec 和打包脚本
+build/__pycache__/
+# 便携包 zip（体积大，不入库）
+*.zip
+.DS_Store

@@ -1,0 +1,38 @@
+# EyeQ PoC Configuration
+# 眼镜端参数 / Glasses-side parameters
+camera:
+  source: 0                  # 摄像头索引 (0=默认摄像头, 用于PoC模拟眼镜摄像头)
+  width: 640
+  height: 480
+  fps: 60                    # 目标帧率; 眼镜端建议60fps以准确捕捉快速眨眼
+
+# 眨眼检测参数 / Blink detection parameters
+blink:
+  ear_threshold: 0.20        # EAR低于此值判定眼睛闭合
+  ear_incomplete_threshold: 0.23  # EAR介于此值与ear_threshold之间视为不完全眨眼
+  closed_frames_min: 2       # 至少连续N帧低于阈值才算一次眨眼 (防抖)
+  closed_frames_max: 90      # 超过此帧数视为长时间闭眼而非眨眼
+  refractory_frames: 5       # 两次眨眼之间的最小间隔帧数
+
+# 泪膜评估参数 / Tear film assessment parameters
+tear_film:
+  # 正常眨眼频率参考范围 (次/分钟)
+  normal_blink_rate_min: 15.0
+  normal_blink_rate_max: 25.0
+  # 不完全眨眼比例风险阈值
+  incomplete_blink_risk_threshold: 0.40   # >40% 不完全眨眼 → 高风险
+  # 眨眼间隔 (秒) — NIBUT估算基础
+  nibut_long_risk_seconds: 6.0            # IBI > 6s → 泪膜破裂风险
+  # 滑动窗口 (秒)
+  rolling_window_seconds: 60
+
+# 指标存储 / Metrics storage
+storage:
+  db_path: "data/eyeq_sessions.db"
+  session_auto_save: true
+
+# 仪表盘 / Dashboard
+dashboard:
+  port: 8501
+  update_interval_ms: 200
+  history_display_seconds: 120
