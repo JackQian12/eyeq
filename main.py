@@ -40,7 +40,7 @@ CFG_PATH = Path(__file__).parent / "config.yaml"
 
 def load_config() -> dict:
     if CFG_PATH.exists():
-        with open(CFG_PATH) as f:
+        with open(CFG_PATH, encoding="utf-8") as f:
             return yaml.safe_load(f)
     return {}
 
@@ -122,6 +122,26 @@ def _build_status_table(agg: MetricsAggregator) -> Table:
             "< 0.5",
             _status(metrics.ibi_cv < 0.5),
         )
+        # 泪河高度 TMH 代理指标
+        if metrics.tmh_avg_mm != 0:
+            tmh_style = {
+                "normal":     "green",
+                "borderline": "yellow",
+                "low":        "red",
+            }.get(metrics.tmh_status, "white")
+            tmh_label = {
+                "normal":     "✓ 正常 (眼睑覆盖充分)",
+                "borderline": "⚠ 临界 (巩膜少量暴露)",
+                "low":        "⚠ 偏高风险 (巩膜显著暴露)",
+            }.get(metrics.tmh_status, metrics.tmh_status)
+            table.add_row(
+                "泪河区位置 TMH代理",
+                f"{metrics.tmh_avg_mm:+.2f} mm",
+                "≤ 0 mm (正常覆盖)",
+                Text(tmh_label, style=tmh_style),
+            )
+        else:
+            table.add_row("泪河区位置 TMH代理", "检测中…", "≤ 0 mm (正常覆盖)", "—")
         risk_txt = Text(
             f"{metrics.risk_level.upper()} ({metrics.risk_score:.0f}/100)",
             style=_risk_color(metrics.risk_level) + " bold",

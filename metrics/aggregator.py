@@ -79,6 +79,9 @@ class MetricsAggregator:
         self._snapshots: Deque[FrameSnapshot] = deque(maxlen=snapshot_buffer_size)
         self._last_metrics: Optional[TearFilmMetrics] = None
         self._session_start: float = time.time()
+        # 泪河高度滚动缓冲区 (~10s @30fps) / TMH rolling buffer
+        self._tmh_buffer: Deque[float] = deque(maxlen=300)
+        self._last_lm: Optional[EyeLandmarks] = None   # 最近一帧关键点缓存
 
     # ── 核心处理循环 / Core processing loop ──────────────────────────────────
 
@@ -93,15 +96,25 @@ class MetricsAggregator:
         Tear-film metrics are recomputed at most once per second to reduce jitter.
         """
         lm: EyeLandmarks = self.tracker.process_frame(frame_bgr)
+        self._last_lm = lm
         blink_event: Optional[BlinkEvent] = self.detector.update(lm)
 
-        # 每秒重新计算泪膜指标
+        # 泪河高度采样 / Collect TMH sample (store exposure value, can be negative)
+        if lm.face_detected and lm.iris_right_pts is not None:
+            self._tmh_buffer.append(lm.tmh_exposure_avg)
+
+        # 每秒重新计算泪膀指标
         now = time.time()
         if (
             self._last_metrics is None
             or (now - self._last_metrics.timestamp) >= 1.0
         ):
             self._last_metrics = self.estimator.compute(self.detector)
+            # 将 TMH 滚动平均写入指标 / Stamp rolling TMH into metrics
+            if self._last_metrics is not None and self._tmh_buffer:
+                tmh_mean = float(np.mean(list(self._tmh_buffer)))
+                self._last_metrics.tmh_avg_mm = tmh_mean
+                self._last_metrics.tmh_status = TearFilmEstimator.classify_tmh(tmh_mean)
 
         snap = FrameSnapshot(
             timestamp=lm.timestamp,
@@ -130,6 +143,24 @@ class MetricsAggregator:
                 color,
                 2,
             )
+            # TMH overlay
+            if self._last_metrics.tmh_avg_mm != 0:
+                exp = self._last_metrics.tmh_avg_mm
+                tmh_color = (
+                    (80, 200, 80) if exp <= -0.5           # normal
+                    else (0, 165, 255) if exp <= 0.0       # borderline
+                    else (0, 60, 220)                      # scleral show
+                )
+                status_label = self._last_metrics.tmh_status
+                cv2.putText(
+                    out,
+                    f"TMH-idx: {exp:+.2f}mm [{status_label}]",
+                    (10, 115),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    tmh_color,
+                    2,
+                )
             cv2.putText(
                 out,
                 f"BR: {self._last_metrics.blink_rate_bpm:.1f} bpm  "
@@ -152,6 +183,11 @@ class MetricsAggregator:
     @property
     def latest_metrics(self) -> Optional[TearFilmMetrics]:
         return self._last_metrics
+
+    @property
+    def last_lm(self) -> Optional[EyeLandmarks]:
+        """最近一帧的关键点结果（避免重复调用 tracker）。\n        Last frame's landmarks — avoids reprocessing the same frame."""
+        return self._last_lm
 
     @property
     def session_duration_s(self) -> float:

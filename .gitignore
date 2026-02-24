@@ -13,3 +13,5 @@ build/__pycache__/
 # 便携包 zip（体积大，不入库）
 *.zip
 .DS_Store
+# MediaPipe 模型文件（运行时下载，不入库）
+*.task

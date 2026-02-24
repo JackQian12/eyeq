@@ -72,7 +72,9 @@ class TearFilmMetrics:
     score_ibr: float               # 0–25
     score_ibi: float               # 0–25
     score_ibi_cv: float            # 0–25
-
+    # ── 泪河高度指标 / Tear Meniscus Height (TMH) ───────────────────
+    tmh_avg_mm: float = 0.0        # 滚动平均下角膜缘暴露量 (mm, 有符号)
+    tmh_status: str = "unknown"    # "normal" | "borderline" | "low" | "unknown"
 
 class TearFilmEstimator:
     """
@@ -208,6 +210,25 @@ class TearFilmEstimator:
     def _score_ibi_cv(self, cv: float) -> float:
         """IBI 变异系数评分：CV > 0.5 认为高变异。"""
         return min(25.0, cv * 35.0)
+
+    @staticmethod
+    def classify_tmh(tmh_mm: float) -> str:
+        """
+        泪河代理指标分级（下角膜缘暴露量，有符号）。
+        Classify lower limbus exposure (signed TMH proxy).
+
+        内底逻辑 / Logic:
+          暴露量 ≤0 mm  → 正常：眼睑覆盖虹膜下缘，泪河区良好
+          暴露量 0–1 mm → 临界：巩膜少量暴露
+          暴露量 > 1 mm  → 偏高风险：巩膜显著暴露，提示睑裂小 / 干眼
+        """
+        if tmh_mm == 0.0:
+            return "unknown"
+        if tmh_mm <= 0.0:
+            return "normal"
+        if tmh_mm <= 1.0:
+            return "borderline"
+        return "low"
 
     # ── 工具函数 / Utilities ─────────────────────────────────────────────────
 

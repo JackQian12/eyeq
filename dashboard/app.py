@@ -49,7 +49,7 @@ RISK_LABEL = {"low": "低风险 LOW", "moderate": "中风险 MODERATE", "high": 
 
 def _load_config() -> dict:
     if CFG_PATH.exists():
-        with open(CFG_PATH) as f:
+        with open(CFG_PATH, encoding="utf-8") as f:
             return yaml.safe_load(f)
     return {}
 
@@ -187,6 +187,7 @@ def run_dashboard() -> None:
     if "ear_buf"    not in st.session_state: st.session_state.ear_buf = []
     if "ts_buf"     not in st.session_state: st.session_state.ts_buf = []
     if "ibi_buf"    not in st.session_state: st.session_state.ibi_buf = []
+    if "tmh_buf"    not in st.session_state: st.session_state.tmh_buf = []
     if "tf_save_ts" not in st.session_state: st.session_state.tf_save_ts = 0.0
 
     if start_btn and not st.session_state.running:
@@ -223,6 +224,7 @@ def run_dashboard() -> None:
         st.session_state.ear_buf    = []
         st.session_state.ts_buf     = []
         st.session_state.ibi_buf    = []
+        st.session_state.tmh_buf    = []
 
     if stop_btn and st.session_state.running:
         if st.session_state.cap:
@@ -255,6 +257,15 @@ def run_dashboard() -> None:
     t0 = st.session_state.ts_buf[0] if st.session_state.ts_buf else snap.timestamp
     st.session_state.ts_buf.append(snap.timestamp - t0)
     st.session_state.ear_buf.append(snap.ear)
+
+    # 更新 TMH 缓冲
+    if metrics and metrics.tmh_avg_mm != 0:
+        st.session_state.tmh_buf.append({
+            "t": snap.timestamp - t0,
+            "v": metrics.tmh_avg_mm,
+            "s": metrics.tmh_status,
+        })
+        st.session_state.tmh_buf = st.session_state.tmh_buf[-int(fps * 120):]
 
     # 裁剪缓冲区到最近 120s
     max_buf = int(fps * 120)
@@ -303,8 +314,8 @@ def run_dashboard() -> None:
         st.session_state.storage.save_tear_film(tfrec)
         st.session_state.tf_save_ts = now
 
-    # ── 绘制关键点并显示视频帧
-    lm = agg.tracker.process_frame(frame)
+    # ── 绘制关键点并显示视频帧 (复用 last_lm，避免重复处理)
+    lm = agg.last_lm or agg.tracker.process_frame(frame)
     annotated = agg.draw_overlay(frame, lm)
     annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
 
@@ -335,6 +346,33 @@ def run_dashboard() -> None:
             m3.metric("估算 NIBUT", f"{metrics.estimated_nibut_s:.1f} s")
             m4.metric("IBI 变异 CV", f"{metrics.ibi_cv:.2f}")
 
+            # TMH 代理指标徽章
+            if metrics.tmh_avg_mm != 0:
+                _TMH_COLOR = {
+                    "normal":     "#4CAF50",
+                    "borderline": "#FF9800",
+                    "low":        "#F44336",
+                    "unknown":    "#9E9E9E",
+                }
+                _TMH_LABEL = {
+                    "normal":     "✓ 正常（眼睑覆盖充分）",
+                    "borderline": "⚠ 临界（巩膜少量暴露）",
+                    "low":        "⚠ 偏高风险（巩膜显著暴露）",
+                    "unknown":    "—",
+                }
+                tc = _TMH_COLOR.get(metrics.tmh_status, "#9E9E9E")
+                tl = _TMH_LABEL.get(metrics.tmh_status, metrics.tmh_status)
+                st.markdown(
+                    f'<div style="background:{tc}18;border:1.5px solid {tc};'
+                    f'border-radius:8px;padding:8px 14px;margin-top:6px;color:{tc};'
+                    f'font-size:0.95em">'
+                    f'💧 <b>泪河区位置代理指标 TMH-idx</b>: '
+                    f'{metrics.tmh_avg_mm:+.2f} mm &nbsp;—&nbsp; {tl}'
+                    f'<span style="font-size:0.78em;opacity:0.7;margin-left:10px">'
+                    f'（≤ 0 mm = 正常覆盖；> 0 mm = 巩膜暴露）</span></div>',
+                    unsafe_allow_html=True,
+                )
+
             st.plotly_chart(_make_gauge(metrics.risk_score, "综合风险评分", risk_color),
                             use_container_width=True)
         else:
@@ -358,6 +396,36 @@ def run_dashboard() -> None:
                 use_container_width=True,
             )
 
+    # TMH 趋势图
+    if len(st.session_state.tmh_buf) > 5:
+        _ts = [r["t"] for r in st.session_state.tmh_buf]
+        _vs = [r["v"] for r in st.session_state.tmh_buf]
+        fig_tmh = go.Figure()
+        fig_tmh.add_trace(go.Scatter(
+            x=_ts, y=_vs,
+            mode="lines",
+            name="TMH-idx",
+            line=dict(color="#00BCD4", width=1.5),
+            fill="tozeroy",
+            fillcolor="rgba(0,188,212,0.12)",
+        ))
+        fig_tmh.add_hline(y=0, line_dash="dash", line_color="#4CAF50",
+                          annotation_text="正常覆盖线", annotation_position="top right")
+        fig_tmh.add_hline(y=1.0, line_dash="dot", line_color="#F44336",
+                          annotation_text="巩膜暴露阈值", annotation_position="top right")
+        fig_tmh.update_layout(
+            title="泪河区位置代理指标趋势 (TMH-idx)",
+            xaxis_title="时间 (s)",
+            yaxis_title="下角膜缘暴露量 (mm)",
+            height=220,
+            margin=dict(l=40, r=20, t=40, b=30),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white"),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_tmh, use_container_width=True)
+
     if metrics:
         with st.expander("📊 详细指标 Detailed Metrics"):
             sub_scores = {
@@ -376,6 +444,8 @@ def run_dashboard() -> None:
                 "窗口内眨眼 window_blinks":      metrics.n_blinks_in_window,
                 "IBI均值 ibi_mean_s":            round(metrics.ibi_mean_s, 3),
                 "IBI标准差 ibi_std_s":           round(metrics.ibi_std_s, 3),
+                "TMH代理 tmh_idx_mm":            round(metrics.tmh_avg_mm, 3),
+                "TMH状态 tmh_status":            metrics.tmh_status,
             })
 
     # 持续刷新
